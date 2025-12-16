@@ -1,0 +1,1126 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>BCP Supply Chain Dashboard (v8 Final Fix)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
+  <!-- Leaflet JS -->
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- pako (zlib 圧縮展開) -->
+  <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+
+  <style>
+    /* 共通スタイル */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f5f5f8; color: #333; }
+    #map { width: 100%; height: 100%; }
+
+    /* ツールチップ */
+    .tooltip {
+      position: fixed; background: #fff; padding: 10px 14px; border-radius: 6px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.15); font-size: 12px; z-index: 1000;
+      white-space: nowrap; border-left: 4px solid #667eea; pointer-events: none;
+    }
+    .tooltip-company { font-weight: 700; color: #4a5568; }
+    .tooltip-plant { font-size: 11px; color: #718096; margin-top: 2px; }
+
+    /* 左パネル */
+    .control-panel {
+      position: absolute; top: 12px; left: 12px; background: #fff;
+      padding: 16px; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+      z-index: 400; width: 380px; max-height: calc(100vh - 24px); overflow-y: auto; font-size: 13px;
+    }
+    .control-panel h3 { color: #2d3748; font-size: 16px; margin-bottom: 12px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; }
+
+    .stat-row { display: flex; justify-content: space-between; margin: 6px 0; padding: 4px 0; border-bottom: 1px solid #f7fafc; font-size: 12px; }
+    .stat-value { font-weight: 700; color: #5a67d8; }
+
+    /* セクションヘッダー */
+    .section-title { font-weight: 700; color: #fff; margin-top: 20px; margin-bottom: 10px; padding: 6px 10px; border-radius: 4px; font-size: 12px; letter-spacing: 0.05em; }
+    .section-analysis { background: linear-gradient(135deg, #00c853, #009624); }
+    .section-contact  { background: linear-gradient(135deg, #e53e3e, #c53030); }
+    .section-search   { background: linear-gradient(135deg, #667eea, #764ba2); }
+    .section-marker   { background: linear-gradient(135deg, #36d1dc, #5b86e5); }
+    .section-link     { background: linear-gradient(135deg, #f093fb, #f5576c); }
+
+    /* 検索ボックス */
+    .search-container { display: flex; gap: 6px; margin-bottom: 10px; }
+    .search-container input { flex: 1; padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 4px; font-size: 12px; }
+    .search-container button { padding: 8px 14px; background: #5a67d8; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600; }
+
+    /* 検索結果リスト */
+    .plant-list { background: #fff; border: 1px solid #e2e8f0; border-radius: 4px; max-height: 180px; overflow-y: auto; margin: 8px 0; }
+    .plant-item { padding: 8px 10px; border-bottom: 1px solid #edf2f7; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+    .plant-item:hover { background: #ebf4ff; }
+    
+    .risk-badge { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+    /* 分析情報パネル */
+    .analysis-info { background: #f8fafc; border: 1px solid #e2e8f0; padding: 10px; margin: 10px 0; border-radius: 6px; font-size: 12px; display: none; }
+    .analysis-info.show { display: block; }
+
+    /* Tier分析セクション */
+    .tier-section { background: #fff; border: 1px solid #cbd5e0; border-radius: 6px; margin: 10px 0; padding: 10px; display: none; }
+    .tier-section.show { display: block; }
+    .tier-title { font-weight: 700; color: #2d3748; font-size: 12px; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 2px solid #5a67d8; }
+
+    /* アラートセクション（連絡先） */
+    .contact-section { background: #fff5f5; border: 2px solid #fc8181; border-radius: 6px; margin: 10px 0; padding: 10px; display: none; }
+    .contact-section.show { display: block; }
+
+    /* ルート選択中表示 */
+    .route-active-msg {
+        background: #ebf8ff; border: 2px solid #3182ce; color: #2b6cb0;
+        padding: 10px; margin: 10px 0; border-radius: 6px; font-size: 12px;
+        display: none; align-items: center; justify-content: space-between;
+        font-weight: 600;
+    }
+    .route-active-msg.show { display: flex; }
+    .btn-clear-route {
+        background: #3182ce; color: #fff; border: none; padding: 6px 12px;
+        border-radius: 4px; cursor: pointer; font-size: 11px; margin-left: 8px;
+    }
+
+    /* サプライヤーリスト項目 */
+    .tier-item { padding: 8px; margin: 4px 0; background: #fff; border: 1px solid #e2e8f0; border-left: 3px solid #ecc94b; border-radius: 4px; font-size: 11px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+    .tier-item:hover { background-color: #f0f7ff; }
+    .tier-company { font-weight: 700; color: #2d3748; }
+    .tier-plant { font-size: 10px; color: #718096; }
+    .tier-risk-tag { font-size: 9px; padding: 2px 6px; border-radius: 3px; color: #fff; font-weight: 600; }
+
+    /* タブボタン */
+    .tab-buttons { display: flex; gap: 6px; margin: 10px 0; }
+    .tab-btn { flex: 1; padding: 8px; background: #edf2f7; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 700; color: #4a5568; }
+    .tab-btn.active { background: #5a67d8; color: #fff; }
+
+    /* フィルタ */
+    .filter-item { display: flex; align-items: center; margin: 6px 0; gap: 8px; font-size: 12px; color: #4a5568; }
+    .indicator { width: 12px; height: 12px; border-radius: 50%; border: 1px solid #fff; box-shadow: 0 0 0 1px #cbd5e0; }
+
+    /* ボタン */
+    .btn-group { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+    .btn { padding: 10px; background: #5a67d8; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; width: 100%; transition: background 0.2s; }
+    .btn:hover { background: #4c51bf; }
+    .btn.secondary { background: #a0aec0; }
+    .btn.secondary:hover { background: #718096; }
+    
+    /* CSV保存ボタン（緑） */
+    .btn-download {
+      background: #2f855a; color: #fff; border: none; padding: 6px 14px; 
+      border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600;
+      margin-right: 8px; display: inline-flex; align-items: center; gap: 4px;
+    }
+    .btn-download:hover { background: #276749; }
+
+    /* 地図表示ボタン（青） */
+    .btn-map-view {
+      background: #3182ce; color: #fff; border: none; padding: 4px 8px;
+      border-radius: 4px; cursor: pointer; font-size: 11px; margin-left: 10px;
+    }
+    .btn-map-view:hover { background: #2c5282; }
+
+    /* 凡例 */
+    .legend { position: absolute; bottom: 20px; right: 20px; background: #fff; padding: 12px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 400; font-size: 11px; }
+    .legend-title { font-weight: 700; margin-bottom: 8px; font-size: 12px; }
+    .legend-item { display: flex; align-items: center; margin: 4px 0; gap: 6px; }
+
+    /* モーダル・オーバーレイ */
+    .overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); z-index: 2000; display: flex; align-items: center; justify-content: center; }
+    .overlay.hide { display: none; }
+    .modal { background: #fff; padding: 24px; border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); max-width: 400px; width: 90%; text-align: center; }
+    .error-msg { color: #e53e3e; font-weight: 600; margin-top: 8px; }
+
+    /* サプライチェーンビューア */
+    .supply-chain-viewer { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 2000; overflow-y: auto; }
+    .supply-chain-viewer.show { display: block; }
+    .supply-chain-panel { background: #fff; border-radius: 8px; max-width: 1200px; margin: 40px auto; width: 95%; box-shadow: 0 10px 40px rgba(0,0,0,0.3); padding-bottom: 20px; }
+    .supply-chain-header { padding: 16px 24px; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; background: #f7fafc; border-radius: 8px 8px 0 0; }
+    .supply-chain-header h2 { color: #2d3748; font-size: 16px; margin: 0; }
+    .supply-chain-content { padding: 20px; max-height: 70vh; overflow-y: auto; }
+
+    /* フロー図 */
+    .chain-item { margin-bottom: 24px; padding: 12px; background: #fff; border: 1px solid #e2e8f0; border-left: 4px solid #5a67d8; border-radius: 4px; }
+    .chain-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .chain-number { display: inline-block; background: #5a67d8; color: #fff; padding: 3px 8px; border-radius: 4px; font-weight: 700; font-size: 11px; }
+    .flow-diagram { display: flex; align-items: center; gap: 8px; overflow-x: auto; padding: 10px; background: #f8fafc; border-radius: 6px; }
+    .flow-node { display: flex; flex-direction: column; align-items: center; gap: 4px; flex-shrink: 0; }
+    .flow-box { background: #fff; border: 2px solid #a0aec0; border-radius: 6px; padding: 6px 10px; min-width: 120px; text-align: center; font-size: 11px; font-weight: 700; color: #2d3748; }
+    .flow-box.target { background: #f0fff4; color: #2f855a; border-color: #48bb78; }
+    .flow-arrow { font-size: 16px; color: #cbd5e0; flex-shrink: 0; }
+    .flow-company { font-size: 10px; color: #718096; margin-top: 2px; }
+    
+    .risk-badge-sm { display: inline-block; font-size: 9px; padding: 1px 5px; border-radius: 3px; color: #fff; }
+    .risk-critical { background: #e53e3e; }
+    .risk-high     { background: #dd6b20; }
+    .risk-medium   { background: #38a169; }
+    .risk-low      { background: #3182ce; }
+
+    /* スクロールバー */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: #f1f1f1; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e0; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #a0aec0; }
+
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <!-- ローディング -->
+  <div id="loading" class="overlay">
+    <div class="modal">
+      <h4 style="color:#5a67d8; margin-bottom:10px;">⏳ データを読み込み中...</h4>
+      <p style="font-size: 12px; color: #666;">圧縮データを展開しています</p>
+    </div>
+  </div>
+
+  <!-- エラー表示 -->
+  <div id="error" class="overlay hide">
+    <div class="modal">
+      <h4>❌ エラーが発生しました</h4>
+      <p id="error-msg" class="error-msg"></p>
+    </div>
+  </div>
+
+  <!-- 左パネル -->
+  <div class="control-panel">
+    <h3>⚠️ BCP分析ダッシュボード</h3>
+    <div id="data-status" style="font-size:11px; color:#2d3748; background:#ebf8ff; border:1px solid #bee3f8; padding:6px 8px; border-radius:4px; margin-bottom:10px;">
+      ⏳ データを読み込んでいます...
+    </div>
+
+    <div class="stat-row">
+      <span>全拠点数:</span>
+      <span class="stat-value" id="stat-plants">0</span>
+    </div>
+    <div class="stat-row">
+      <span>表示中マーカー:</span>
+      <span class="stat-value" id="stat-visible-markers">0</span>
+    </div>
+
+    <!-- 検索セクション -->
+    <div class="section-title section-search">🔍 企業検索</div>
+    <div class="search-container">
+      <input
+        type="text"
+        id="search-company"
+        placeholder="会社名を入力..."
+        onkeyup="if(event.key==='Enter'){ app.searchCompany(); }"
+      />
+      <button onclick="app.searchCompany()">検索</button>
+    </div>
+
+    <!-- 検索結果リスト -->
+    <div id="plant-list-container" style="display: none;">
+      <div style="font-size: 11px; font-weight: 600; margin: 8px 0; padding: 6px; background: #ebf8ff; border-radius: 4px; color:#2c5282;">
+        📍 検索結果: <span id="plant-count">0</span>件
+      </div>
+      <div id="plant-list" class="plant-list"></div>
+      <div style="font-size: 10px; color: #718096; margin-top: 4px; padding: 4px;">
+        💡 拠点を選択して詳細分析を開始します
+      </div>
+    </div>
+
+    <!-- 分析対象（選択企業） -->
+    <div class="section-title section-analysis">🎯 分析対象・選択拠点</div>
+    <div id="analysis-info" class="analysis-info">
+      <div><strong id="analysis-company-strong" style="font-size:14px; color:#2d3748;"></strong></div>
+      <div style="margin-top: 2px;">拠点: <span id="plant-name-span"></span></div>
+      <div style="margin-top: 2px; font-size:11px;">リスク: <span id="tierN-risk" style="font-weight:700;"></span></div>
+      
+      <div style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed #cbd5e0; display:flex; justify-content:space-between; text-align:center;">
+        <div style="flex:1;">
+          <div style="font-size:10px; color:#718096;">供給元 (上流)</div>
+          <div style="font-size:16px; font-weight:700; color:#5a67d8;" id="upstream-count">0</div>
+        </div>
+        <div style="width:1px; background:#e2e8f0;"></div>
+        <div style="flex:1;">
+          <div style="font-size:10px; color:#718096;">供給先 (下流)</div>
+          <div style="font-size:16px; font-weight:700; color:#38a169;" id="downstream-count">0</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ルート選択中メッセージ -->
+    <div id="route-active-msg" class="route-active-msg">
+       <span>🗺️ <span id="active-route-name">ルート</span> を強調表示中</span>
+       <button class="btn-clear-route" onclick="app.clearChainSelection()">表示解除</button>
+    </div>
+
+    <!-- 連絡すべきTier1リスト -->
+    <div id="contact-tier1-section" class="contact-section">
+      <div style="font-weight:700; font-size:12px; color:#c53030; margin-bottom:6px;">
+        📞 【至急連絡】一次仕入先 (Tier 1)
+      </div>
+      <div style="font-size:10px; color:#555; margin-bottom:6px;">
+        この拠点被災による影響を確認すべき、三桜工業の直接仕入先です。
+      </div>
+      <div id="contact-tier1-list"></div>
+    </div>
+
+    <!-- 供給先（下流）リスト -->
+    <div id="downstream-section" class="tier-section">
+      <div class="tier-title" style="border-bottom-color: #38a169; color:#2f855a;">【供給先】納入先・顧客 (Downstream)</div>
+      <div style="font-size:10px; color:#718096; margin-bottom:6px;">
+        ※ 分析対象（上記）が納入している企業
+      </div>
+      <div id="downstream-list"></div>
+    </div>
+
+    <!-- 供給元（上流）リスト -->
+    <div id="tier1-section" class="tier-section">
+      <div class="tier-title">【供給元】直接サプライヤー (Upstream)</div>
+      <div style="font-size:10px; color:#718096; margin-bottom:6px;">
+        ※ 分析対象（上記）へ納入している企業
+      </div>
+      <div id="tier1-list"></div>
+    </div>
+
+    <!-- 詳細分析ボタン -->
+    <div class="tab-buttons" id="tab-buttons" style="display: none;">
+      <button class="tab-btn active" onclick="app.showSupplyChainTab('flow')">🔀 サプライチェーン フロー</button>
+      <button class="tab-btn" onclick="app.showSupplyChainTab('table')">📋 詳細リスト</button>
+    </div>
+
+    <!-- フィルタ設定 -->
+    <div class="section-title section-marker">📍 表示フィルタ</div>
+    
+    <div style="margin-bottom:8px;"><strong>マーカー (拠点)</strong></div>
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:4px;">
+      <div class="filter-item">
+        <input type="checkbox" id="filter-marker-critical" checked onchange="app.updateVisibility()" />
+        <label for="filter-marker-critical"><div class="indicator" style="background:#e53e3e;"></div> CRITICAL</label>
+      </div>
+      <div class="filter-item">
+        <input type="checkbox" id="filter-marker-high" checked onchange="app.updateVisibility()" />
+        <label for="filter-marker-high"><div class="indicator" style="background:#dd6b20;"></div> HIGH</label>
+      </div>
+      <div class="filter-item">
+        <input type="checkbox" id="filter-marker-medium" checked onchange="app.updateVisibility()" />
+        <label for="filter-marker-medium"><div class="indicator" style="background:#38a169;"></div> MEDIUM</label>
+      </div>
+      <div class="filter-item">
+        <input type="checkbox" id="filter-marker-low" checked onchange="app.updateVisibility()" />
+        <label for="filter-marker-low"><div class="indicator" style="background:#3182ce;"></div> LOW</label>
+      </div>
+    </div>
+
+    <div style="margin:10px 0 8px;"><strong>リンク (供給網)</strong></div>
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:4px;">
+      <div class="filter-item">
+        <input type="checkbox" id="filter-link-critical" checked onchange="app.updateVisibility()" />
+        <label for="filter-link-critical">CRITICAL</label>
+      </div>
+      <div class="filter-item">
+        <input type="checkbox" id="filter-link-high" checked onchange="app.updateVisibility()" />
+        <label for="filter-link-high">HIGH</label>
+      </div>
+      <div class="filter-item">
+        <input type="checkbox" id="filter-link-medium" checked onchange="app.updateVisibility()" />
+        <label for="filter-link-medium">MEDIUM</label>
+      </div>
+      <div class="filter-item">
+        <input type="checkbox" id="filter-link-low" checked onchange="app.updateVisibility()" />
+        <label for="filter-link-low">LOW</label>
+      </div>
+    </div>
+
+    <div class="btn-group">
+      <button class="btn" onclick="app.fitAllMarkers()">🌍 全体を表示</button>
+      <button class="btn secondary" onclick="app.clearAnalysis()">✖ 分析をリセット</button>
+    </div>
+  </div>
+
+  <!-- 凡例 -->
+  <div class="legend">
+    <div class="legend-title">📊 リスクレベル</div>
+    <div class="legend-item"><div class="indicator" style="background:#e53e3e;"></div><span>CRITICAL</span></div>
+    <div class="legend-item"><div class="indicator" style="background:#dd6b20;"></div><span>HIGH</span></div>
+    <div class="legend-item"><div class="indicator" style="background:#38a169;"></div><span>MEDIUM</span></div>
+    <div class="legend-item"><div class="indicator" style="background:#3182ce;"></div><span>LOW</span></div>
+  </div>
+
+  <!-- 多段階サプライチェーンビューア -->
+  <div id="supply-chain-viewer" class="supply-chain-viewer">
+    <div class="supply-chain-panel">
+      <div class="supply-chain-header">
+        <h2>📊 サプライチェーン分析 (<span id="trace-direction-label">方向不明</span>) - <span id="sc-title-span"></span></h2>
+        <div>
+          <button class="btn-download" onclick="app.downloadCSV()">💾 CSV保存</button>
+          <button onclick="app.closeSupplyChainViewer()" style="background:#a0aec0; color:#fff; border:none; padding:6px 12px; border-radius:4px; cursor:pointer;">✖ 閉じる</button>
+        </div>
+      </div>
+      <div class="supply-chain-content">
+        <div id="flow-tab">
+          <div id="flow-chains"></div>
+        </div>
+        <div id="table-tab" style="display:none;">
+          <div id="table-chains"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Python から置換される圧縮データ (空の場合はデモデータにフォールバック)
+    const COMPRESSED_GEOJSON = "COMPRESSEDGEOJSONHERE";
+    const COMPRESSED_LINKS = "COMPRESSEDLINKSHERE";
+    const COMPRESSED_UPSTREAM = "COMPRESSEDUPSTREAMHERE";
+    const COMPRESSED_DOWNSTREAM = "COMPRESSEDDOWNSTREAMHERE";
+
+    // デモ用圧縮データ (zlib + base64)
+    const DEFAULT_COMPRESSED_GEOJSON = "eJytkm9LwkAcx9+K7LGMdDqzZ2F/HChFFD0IkaFXjeZu3M5AxAfRgyiVhEiTzqM4g70KPOHR8HD0yCzgYGkiGv1nmb6nNcf42W1bZRizrcxNc5Dcw6mM5S1wCMe4Xx4+SSNDhzNGhtVLNMY1UZnOeTHPiPF80JQ2wQUlxFJwh2A97KQxCqlQOpccF47r/RYq7pj+IFoBRwEkQieckOjtGAxiNQeYBZqvL0vfiQMFe+UeyUhxg3jkZnJ5psHbfsygcjok5t11Rxe2K/9uyU8m+P/Xw3+qfP2b4xG0/49HBIcN5zudIPG0BfS6l1Jm2NmJr7iBsrX/skCh+Nx+oF7V3xSx6P+GciUGBCy4BzKW5fzAi2vjHBBANQC8sJfQ=";
+    const DEFAULT_COMPRESSED_LINKS = "eJyrVnIO8gzxdHb0UbJSiI7VUVDy8HT3ALGrlYrzS4uSU0FsQ2NLPUMdBWMzUxOAkMLcwrLUhMLOoBygXWdjJqYlIDaxPo1QO4MTK1eH5Bga1EFAAvpjDS";
+    const DEFAULT_COMPRESSED_UPSTREAM = "eJyrVjJUslKINtJRMI7VUVAyAnFADGMYwwTEMASxTCGsWgAUJgrp";
+    const DEFAULT_COMPRESSED_DOWNSTREAM = "eJyrVjJUslKINtFRMI3VUVAyAnEMQSxjOMsExAIxTMGMWgAUXArt";
+
+    const CONFIG = {
+      LINK_STYLES: {
+        CRITICAL: { color: "#e53e3e", weight: 2.5, opacity: 0.8 },
+        HIGH:     { color: "#dd6b20", weight: 2, opacity: 0.6 },
+        MEDIUM:   { color: "#38a169", weight: 1.5, opacity: 0.4 },
+        LOW:      { color: "#3182ce", weight: 1, opacity: 0.2 },
+      }
+    };
+
+    const app = {
+      state: {
+        geoJsonData: null,
+        linksData: null,
+        upstreamData: null,
+        downstreamData: null,
+        sanohTier1Set: null,
+        map: null,
+        markers: {},
+        links: { CRITICAL: [], HIGH: [], MEDIUM: [], LOW: [] },
+        companyPlants: [],
+        currentChains: [],      
+        currentTraceType: "",   
+        currentTargetName: "",
+        relatedNodeIds: new Set(),
+        activeChainArray: null, // 単一ルート選択用（配列で順序保持）
+        coordToIdMap: {}, 
+        featureById: {}, // IDからFeatureへの高速アクセス用
+        routeLayerGroup: null, // ルート描画専用のレイヤーグループ
+      },
+
+      decompressData(compressed) {
+        try {
+          if (!compressed || compressed.includes("COMPRESSED")) return null;
+          const binary = atob(compressed);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+          }
+          const decompressed = pako.inflate(bytes, { to: "string" });
+          const sanitized = decompressed.replace(/\bNaN\b/g, "null");
+          return JSON.parse(sanitized);
+        } catch (e) {
+          throw new Error("データ展開失敗: " + e.message);
+        }
+      },
+
+      initData() {
+        try {
+          const geo = this.decompressData(COMPRESSED_GEOJSON) || this.decompressData(DEFAULT_COMPRESSED_GEOJSON);
+          const linksByRisk = this.decompressData(COMPRESSED_LINKS) || this.decompressData(DEFAULT_COMPRESSED_LINKS);
+          const upstream = this.decompressData(COMPRESSED_UPSTREAM) || this.decompressData(DEFAULT_COMPRESSED_UPSTREAM);
+          const downstream = this.decompressData(COMPRESSED_DOWNSTREAM) || this.decompressData(DEFAULT_COMPRESSED_DOWNSTREAM);
+
+          if (!geo) throw new Error("データが空です");
+
+          this.state.geoJsonData = geo;
+          this.state.linksData = linksByRisk;
+          this.state.upstreamData = upstream;
+          this.state.downstreamData = downstream;
+          const dataStatus = document.getElementById("data-status");
+          const usedFallback = [COMPRESSED_GEOJSON, COMPRESSED_LINKS, COMPRESSED_UPSTREAM, COMPRESSED_DOWNSTREAM].some(v => v.includes("COMPRESSED"));
+          dataStatus.textContent = usedFallback ? "デモデータを読み込みました (自動補完)" : "外部データを読み込みました";
+          dataStatus.style.background = usedFallback ? "#fefcbf" : "#e6fffa";
+          dataStatus.style.borderColor = usedFallback ? "#faf089" : "#b2f5ea";
+
+          // IDからFeatureへのマッピング作成
+          geo.features.forEach(f => {
+              this.state.featureById[f.properties.id] = f;
+          });
+          
+          // 座標 -> ID マッピング (精度緩和: 小数点4桁で丸める)
+          const roundCoord = (val) => val.toFixed(4);
+          geo.features.forEach(f => {
+              const [lon, lat] = f.geometry.coordinates;
+              const key = `${roundCoord(lat)},${roundCoord(lon)}`;
+              this.state.coordToIdMap[key] = f.properties.id;
+          });
+
+          // 三桜工業の一次仕入先（Tier1）セット構築
+          const sanohTier1Set = new Set();
+          (geo.features || []).forEach(f => {
+            if (f.properties.is_sanoh_tier1) {
+              sanohTier1Set.add(Number(f.properties.id));
+            }
+          });
+          this.state.sanohTier1Set = sanohTier1Set;
+
+          this.initMap();
+          this.updateStats();
+          this.fitAllMarkers();
+
+          // マップ生成後にレイヤーグループを追加
+          this.state.routeLayerGroup = L.layerGroup().addTo(this.state.map);
+
+          document.getElementById("loading").classList.add("hide");
+        } catch (e) {
+          console.error(e);
+          document.getElementById("error-msg").textContent = e.message;
+          document.getElementById("error").classList.remove("hide");
+          document.getElementById("loading").classList.add("hide");
+        }
+      },
+
+      initMap() {
+        this.state.map = L.map("map", { center: [36.0, 138.0], zoom: 5, preferCanvas: true });
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18, attribution: "&copy; OpenStreetMap contributors" }).addTo(this.state.map);
+        this.initMarkers();
+        this.initLinks();
+      },
+
+      getRiskColor(risk) {
+        switch (risk) {
+          case "CRITICAL": return "#e53e3e";
+          case "HIGH":     return "#dd6b20";
+          case "MEDIUM":   return "#38a169";
+          default:         return "#3182ce";
+        }
+      },
+
+      initMarkers() {
+        const features = this.state.geoJsonData.features || [];
+        const tooltip = L.DomUtil.create("div", "tooltip");
+        document.body.appendChild(tooltip);
+
+        features.forEach(f => {
+          const p = f.properties;
+          const [lon, lat] = f.geometry.coordinates;
+          if (!isFinite(lat) || !isFinite(lon)) return;
+
+          const color = this.getRiskColor(p.risklevel);
+          const marker = L.circleMarker([lat, lon], { radius: 5, fillColor: color, color: "#fff", weight: 1, fillOpacity: 0.9 });
+          marker.addTo(this.state.map);
+          this.state.markers[p.id] = marker;
+
+          marker.on("click", () => { this.analyzePlant(p.id); });
+          marker.on("mouseover", (e) => {
+            tooltip.innerHTML = `<div class="tooltip-company">${p.company}</div><div class="tooltip-plant">${p.plant}</div><div style="font-size:10px; color:${color}; margin-top:2px;">${p.risklevel}</div>`;
+            tooltip.style.left = (e.originalEvent.clientX + 12) + "px";
+            tooltip.style.top  = (e.originalEvent.clientY + 12) + "px";
+            tooltip.style.display = "block";
+          });
+          marker.on("mouseout", () => { tooltip.style.display = "none"; });
+        });
+      },
+
+      initLinks() {
+        const linksByRisk = this.state.linksData || {};
+        const roundCoord = (val) => val.toFixed(4);
+        
+        ["CRITICAL", "HIGH", "MEDIUM", "LOW"].forEach(risk => {
+          const style = CONFIG.LINK_STYLES[risk];
+          const arr = linksByRisk[risk] || [];
+          arr.forEach(link => {
+            const [slon, slat] = link.source;
+            const [tlon, tlat] = link.target;
+            if (!isFinite(slat) || !isFinite(slon) || !isFinite(tlat) || !isFinite(tlon)) return;
+
+            // リンクの始点・終点IDを特定
+            const srcKey = `${roundCoord(slat)},${roundCoord(slon)}`;
+            const tgtKey = `${roundCoord(tlat)},${roundCoord(tlon)}`;
+            const srcId = this.state.coordToIdMap[srcKey];
+            const tgtId = this.state.coordToIdMap[tgtKey];
+
+            const line = L.polyline([[slat, slon], [tlat, tlon]], style);
+            line.addTo(this.state.map);
+            this.state.links[risk].push({ line, meta: link, risk, srcId, tgtId });
+          });
+        });
+        this.updateVisibility();
+      },
+
+      updateStats() {
+        const total = (this.state.geoJsonData.features || []).length;
+        document.getElementById("stat-plants").textContent = total;
+        this.updateVisibility();
+      },
+
+      fitAllMarkers() {
+        const markers = Object.values(this.state.markers);
+        if (!markers.length) return;
+        const group = L.featureGroup(markers);
+        this.state.map.fitBounds(group.getBounds().pad(0.1));
+      },
+
+      clearAnalysis() {
+        this.state.selectedPlantId = null;
+        this.state.relatedNodeIds.clear();
+        this.clearChainSelection(); // 単一ルート選択もクリア
+        
+        Object.values(this.state.markers).forEach(m => m.setStyle({ radius: 5, weight: 1 }));
+        document.getElementById("analysis-info").classList.remove("show");
+        document.getElementById("tier1-section").classList.remove("show");
+        document.getElementById("downstream-section").classList.remove("show");
+        document.getElementById("contact-tier1-section").classList.remove("show");
+        document.getElementById("tab-buttons").style.display = "none";
+        
+        this.updateVisibility();
+      },
+
+      // 単一ルート選択の解除
+      clearChainSelection() {
+        this.state.activeChainArray = null;
+        if (this.state.routeLayerGroup) {
+            this.state.routeLayerGroup.clearLayers(); // ルート線を消す
+        }
+        document.getElementById("route-active-msg").classList.remove("show");
+        this.updateVisibility();
+      },
+
+      // 単一ルートの選択・表示（★ロジック刷新）
+      showChainOnMap(chainIndex) {
+        if (!this.state.currentChains || !this.state.currentChains[chainIndex]) return;
+        
+        const chain = this.state.currentChains[chainIndex];
+        // 表示順序を [Start] -> [End] に統一
+        this.state.activeChainArray = this.state.currentTraceType.includes("upstream") ? [...chain].reverse() : chain;
+
+        document.getElementById("active-route-name").textContent = `ルート ${chainIndex + 1}`;
+        document.getElementById("route-active-msg").classList.add("show");
+        
+        this.closeSupplyChainViewer();
+        
+        // 1. 既存のリンク表示を更新（基本隠す）
+        this.updateVisibility();
+        
+        // 2. ルート専用の線を引く (ID -> 座標)
+        this.state.routeLayerGroup.clearLayers();
+        const latlngs = [];
+        
+        this.state.activeChainArray.forEach(id => {
+            const f = this.state.featureById[Number(id)];
+            if (f) {
+                const [lon, lat] = f.geometry.coordinates;
+                latlngs.push([lat, lon]);
+            }
+        });
+
+        // ポリラインを描画 (太さ5px, 青色)
+        if (latlngs.length > 1) {
+            L.polyline(latlngs, {
+                color: "#3182ce",
+                weight: 5,
+                opacity: 0.9,
+                lineCap: 'round'
+            }).addTo(this.state.routeLayerGroup);
+        }
+        
+        // ルート全体が収まるようにズーム
+        if (latlngs.length > 0) {
+            this.state.map.fitBounds(L.latLngBounds(latlngs).pad(0.1));
+        }
+      },
+
+      analyzePlant(nodeId) {
+        this.state.selectedPlantId = nodeId;
+        this.clearChainSelection(); // 新しい分析時はルート選択リセット
+        
+        this.identifyRelatedNetwork(nodeId);
+        this.updateVisibility();
+
+        const targetMarker = this.state.markers[nodeId];
+        if (targetMarker) {
+           targetMarker.setStyle({ radius: 10, weight: 3, color: "#2d3748" });
+           targetMarker.bringToFront();
+        }
+
+        const feature = (this.state.geoJsonData.features || []).find(f => f.properties.id === nodeId);
+        if (!feature) return;
+
+        const p = feature.properties;
+        document.getElementById("analysis-company-strong").textContent = p.company;
+        document.getElementById("plant-name-span").textContent = p.plant;
+        const riskEl = document.getElementById("tierN-risk");
+        riskEl.textContent = p.risklevel;
+        riskEl.style.color = this.getRiskColor(p.risklevel);
+
+        const upstream = new Set(this.state.upstreamData[String(nodeId)] || []);
+        const downstream = new Set(this.state.downstreamData[String(nodeId)] || []);
+        document.getElementById("upstream-count").textContent = upstream.size;
+        document.getElementById("downstream-count").textContent = downstream.size;
+
+        document.getElementById("analysis-info").classList.add("show");
+
+        this.renderTier1List(nodeId);
+        this.renderDownstreamList(nodeId);
+        this.renderImpactedTier1s(nodeId);
+        
+        this.currentChainNodeId = nodeId;
+        document.getElementById("tab-buttons").style.display = "flex";
+      },
+      
+      identifyRelatedNetwork(startNodeId) {
+          const related = new Set();
+          related.add(Number(startNodeId));
+
+          const qUp = [startNodeId];
+          const visitedUp = new Set([startNodeId]);
+          while(qUp.length > 0) {
+              const curr = qUp.shift();
+              const ups = this.state.upstreamData[String(curr)] || [];
+              ups.forEach(next => {
+                  const nId = Number(next);
+                  if(!visitedUp.has(next)) {
+                      visitedUp.add(next);
+                      qUp.push(next);
+                      related.add(nId);
+                  }
+              });
+          }
+
+          const qDown = [startNodeId];
+          const visitedDown = new Set([startNodeId]);
+          while(qDown.length > 0) {
+              const curr = qDown.shift();
+              const downs = this.state.downstreamData[String(curr)] || [];
+              downs.forEach(next => {
+                   const nId = Number(next);
+                   if(!visitedDown.has(next)) {
+                       visitedDown.add(next);
+                       qDown.push(next);
+                       related.add(nId);
+                   }
+              });
+          }
+          
+          this.state.relatedNodeIds = related;
+      },
+
+      renderImpactedTier1s(nodeId) {
+          const container = document.getElementById("contact-tier1-list");
+          container.innerHTML = "";
+          const section = document.getElementById("contact-tier1-section");
+          section.classList.remove("show");
+          
+          // ★修正: undefined回避のため this.state.featureById を参照
+          const featureById = this.state.featureById;
+
+          if (this.state.sanohTier1Set.has(Number(nodeId))) {
+             this.renderList(container, [Number(nodeId)], "#e53e3e"); 
+             section.classList.add("show");
+             return;
+          }
+
+          const impactedTier1s = new Set();
+          const queue = [nodeId];
+          const visited = new Set();
+          
+          while(queue.length > 0) {
+              const curr = queue.shift();
+              if (visited.has(curr)) continue;
+              visited.add(curr);
+
+              const downstream = this.state.downstreamData[String(curr)] || [];
+              
+              downstream.forEach(next => {
+                  if (this.state.sanohTier1Set.has(Number(next))) {
+                      impactedTier1s.add(Number(next));
+                  } else {
+                      queue.push(next);
+                  }
+              });
+          }
+
+          if (impactedTier1s.size > 0) {
+              this.renderList(container, Array.from(impactedTier1s), "#e53e3e");
+              section.classList.add("show");
+          }
+      },
+
+      renderTier1List(nodeId) {
+        const container = document.getElementById("tier1-list");
+        container.innerHTML = "";
+        
+        const upstreamIds = this.state.upstreamData[String(nodeId)] || [];
+        const uniqIds = Array.from(new Set(upstreamIds.map(id => Number(id))));
+
+        if (uniqIds.length === 0) {
+          document.getElementById("tier1-section").classList.remove("show");
+          return;
+        }
+
+        this.renderList(container, uniqIds, "#ecc94b");
+        document.getElementById("tier1-section").classList.add("show");
+      },
+
+      renderDownstreamList(nodeId) {
+        const container = document.getElementById("downstream-list");
+        container.innerHTML = "";
+        
+        const downstreamIds = this.state.downstreamData[String(nodeId)] || [];
+        const uniqIds = Array.from(new Set(downstreamIds.map(id => Number(id))));
+
+        if (uniqIds.length === 0) {
+          document.getElementById("downstream-section").classList.remove("show");
+          return;
+        }
+
+        this.renderList(container, uniqIds, "#38a169");
+        document.getElementById("downstream-section").classList.add("show");
+      },
+
+      renderList(container, ids, borderColor) {
+        const featureById = this.state.featureById;
+
+        const items = ids
+          .map(id => featureById[id])
+          .filter(Boolean)
+          .sort((a,b) => (a.properties.company).localeCompare(b.properties.company, "ja"));
+
+        items.forEach(f => { // ★修正: itemsの要素はFeatureなので f とする
+          const p = f.properties; // ★修正: FeatureからPropertiesを取得
+          const div = document.createElement("div");
+          div.className = "tier-item";
+          div.style.borderLeftColor = borderColor;
+          div.onclick = () => this.analyzePlant(p.id);
+          const riskColor = this.getRiskColor(p.risklevel);
+          div.innerHTML = `
+            <div><div class="tier-company">${p.company}</div><div class="tier-plant">${p.plant}</div></div>
+            <div class="tier-risk-tag" style="background:${riskColor};">${p.risklevel}</div>`;
+          container.appendChild(div);
+        });
+      },
+
+      // ★ 修正: 線の太さを調整 (ルート選択時5px、全体表示時2.5px)
+      updateVisibility() {
+        const getChecked = (id) => { const el = document.getElementById(id); return el ? el.checked : true; };
+        const filters = {
+          CRITICAL: getChecked("filter-marker-critical"),
+          HIGH:     getChecked("filter-marker-high"),
+          MEDIUM:   getChecked("filter-marker-medium"),
+          LOW:      getChecked("filter-marker-low"),
+        };
+        const lFilters = {
+          CRITICAL: getChecked("filter-link-critical"),
+          HIGH:     getChecked("filter-link-high"),
+          MEDIUM:   getChecked("filter-link-medium"),
+          LOW:      getChecked("filter-link-low"),
+        };
+
+        const isAnalysisActive = this.state.selectedPlantId !== null;
+        const activeChain = this.state.activeChainArray;
+        const isRouteSelected = activeChain !== null; 
+        
+        let visibleM = 0;
+        const activeSet = isRouteSelected ? new Set(activeChain.map(Number)) : null;
+
+        // マーカー
+        Object.entries(this.state.markers).forEach(([id, marker]) => {
+           const f = (this.state.geoJsonData.features || []).find(feat => String(feat.properties.id) === String(id));
+           if(!f) return;
+           
+           let show = filters[f.properties.risklevel] !== false;
+           const numId = Number(id);
+
+           if (activeSet) {
+               if (!activeSet.has(numId)) show = false;
+           } else if (isAnalysisActive) {
+               if (!this.state.relatedNodeIds.has(numId)) show = false;
+           }
+
+           if(show) visibleM++;
+           marker.setStyle({ opacity: show ? 1 : 0, fillOpacity: show ? 0.9 : 0, pointerEvents: show ? 'auto' : 'none' });
+        });
+        document.getElementById("stat-visible-markers").textContent = visibleM;
+
+        // リンク (ルート選択中は、既存の全リンクを非表示にし、routeLayerGroupに任せる)
+        ["CRITICAL","HIGH","MEDIUM","LOW"].forEach(risk => {
+           const riskShow = lFilters[risk] !== false;
+           
+           this.state.links[risk].forEach(l => {
+             let show = riskShow;
+             let lineStyle = { ...CONFIG.LINK_STYLES[risk] }; 
+
+             if (isRouteSelected) {
+                 // ルート選択中は、背景のリンクはすべて消す
+                 show = false;
+             } else if (isAnalysisActive) {
+                 // 通常分析モード：ID情報がないリンクは消せないので薄くする
+                 lineStyle.opacity = 0.1; 
+                 lineStyle.weight = 1;
+             } else {
+                 // 通常時
+             }
+
+             if (!show) lineStyle.opacity = 0;
+             l.line.setStyle(lineStyle);
+           });
+        });
+      },
+
+      searchCompany() {
+        const input = document.getElementById("search-company");
+        const query = (input.value || "").trim().toLowerCase();
+        if (!query) return;
+        const features = this.state.geoJsonData.features || [];
+        const matches = features.filter(f => (f.properties.company || "").toLowerCase().includes(query));
+        if (matches.length === 0) { alert("見つかりませんでした"); return; }
+        this.state.companyPlants = matches.map(f => ({ id: f.properties.id, company: f.properties.company, plant: f.properties.plant, risk: f.properties.risklevel }));
+        this.renderPlantList();
+      },
+
+      renderPlantList() {
+        const container = document.getElementById("plant-list");
+        const wrap = document.getElementById("plant-list-container");
+        container.innerHTML = "";
+        document.getElementById("plant-count").textContent = this.state.companyPlants.length;
+        wrap.style.display = "block";
+        const riskOrder = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+        const sorted = [...this.state.companyPlants].sort((a,b) => riskOrder[a.risk] - riskOrder[b.risk]);
+        sorted.forEach(p => {
+          const div = document.createElement("div");
+          div.className = "plant-item";
+          const color = this.getRiskColor(p.risk);
+          div.innerHTML = `<div class="risk-badge" style="background:${color}"></div><div style="flex:1"><div style="font-weight:700; color:#2d3748;">${p.company}</div><div style="font-size:11px; color:#718096;">${p.plant}</div></div><div class="risk-badge-sm" style="background:${color}">${p.risk}</div>`;
+          div.onclick = () => { this.analyzePlant(p.id); const m = this.state.markers[p.id]; if(m) this.state.map.setView(m.getLatLng(), 8); };
+          container.appendChild(div);
+        });
+      },
+
+      showSupplyChainTab(mode) {
+         if(!this.currentChainNodeId) return;
+         const flowTab = document.getElementById("flow-tab");
+         const tableTab = document.getElementById("table-tab");
+         const btns = document.querySelectorAll(".tab-btn");
+         if(mode === 'flow') {
+            flowTab.style.display = 'block'; tableTab.style.display = 'none';
+            btns[0].classList.add("active"); btns[1].classList.remove("active");
+         } else {
+            flowTab.style.display = 'none'; tableTab.style.display = 'block';
+            btns[0].classList.remove("active"); btns[1].classList.add("active");
+         }
+         this.buildSmartSupplyChain(this.currentChainNodeId);
+      },
+
+      buildSmartSupplyChain(nodeId) {
+         const upstream = this.state.upstreamData[String(nodeId)] || [];
+         const downstream = this.state.downstreamData[String(nodeId)] || [];
+         
+         let traceType = "upstream";
+         let chains = [];
+
+         if (upstream.length > 0) {
+            traceType = "upstream (供給元への遡り)";
+            chains = this.traceChains(nodeId, "upstream");
+         } 
+         else if (downstream.length > 0) {
+            traceType = "downstream (供給先への追跡)";
+            chains = this.traceChains(nodeId, "downstream");
+         }
+         
+         if (chains.length === 0) {
+            alert("サプライチェーンのつながりが見つかりませんでした。");
+            return;
+         }
+         
+         this.state.currentChains = chains;
+         this.state.currentTraceType = traceType;
+         const feature = (this.state.geoJsonData.features || []).find(f => f.properties.id === nodeId);
+         this.state.currentTargetName = feature ? `${feature.properties.company}_${feature.properties.plant}` : "analysis";
+
+         document.getElementById("trace-direction-label").textContent = traceType;
+         this.renderSupplyChainModal(nodeId, chains, traceType);
+      },
+
+      traceChains(startNodeId, direction) {
+         const maxDepth = 10;
+         const chains = [];
+         const queue = [{ path: [startNodeId], depth: 0 }];
+         const data = direction === "upstream" ? this.state.upstreamData : this.state.downstreamData;
+
+         while(queue.length) {
+            const { path, depth } = queue.shift();
+            if (depth >= maxDepth) continue;
+            
+            const curr = path[path.length - 1];
+            
+            const feature = (this.state.geoJsonData.features || []).find(f => String(f.properties.id) === String(curr));
+            const isSanoh = feature && feature.properties.company.includes("三桜工業");
+            const isTier1 = this.state.sanohTier1Set.has(Number(curr));
+
+            if (isSanoh || isTier1) {
+                chains.push(path);
+                continue;
+            }
+
+            const nextNodes = data[String(curr)] || [];
+            
+            if (nextNodes.length === 0) {
+               continue; 
+            }
+
+            nextNodes.forEach(next => {
+               if(path.includes(next)) return; 
+               queue.push({ path: [...path, next], depth: depth + 1 });
+            });
+         }
+         return chains;
+      },
+      
+      downloadCSV() {
+        if (!this.state.currentChains || !this.state.currentChains.length) {
+            alert("出力するデータがありません。");
+            return;
+        }
+        
+        const featureById = {};
+        (this.state.geoJsonData.features || []).forEach(f => featureById[f.properties.id] = f.properties);
+
+        let csvContent = "\uFEFF";
+        csvContent += "Chain_ID,Sequence,Tier,Company,Plant,Risk_Level\n";
+
+        this.state.currentChains.forEach((path, idx) => {
+            const displayPath = this.state.currentTraceType.includes("upstream") ? [...path].reverse() : path;
+            
+            displayPath.forEach((nodeId, i) => {
+                const p = featureById[nodeId];
+                if (!p) return;
+                
+                const company = p.company ? p.company.replace(/"/g, '""') : "";
+                const plant = p.plant ? p.plant.replace(/"/g, '""') : "";
+                const tierLevel = (displayPath.length - 1) - i;
+                
+                csvContent += `${idx + 1},${i + 1},Tier ${tierLevel},"${company}","${plant}",${p.risklevel}\n`;
+            });
+        });
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        
+        const now = new Date();
+        const timeStr = `${now.getFullYear()}${now.getMonth()+1}${now.getDate()}_${now.getHours()}${now.getMinutes()}`;
+        const fileName = `SupplyChain_${this.state.currentTargetName}_${timeStr}.csv`;
+        
+        link.setAttribute("href", url);
+        link.setAttribute("download", fileName);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      },
+
+      renderSupplyChainModal(targetId, chains, traceType) {
+         const featureById = {};
+         (this.state.geoJsonData.features || []).forEach(f => featureById[f.properties.id] = f.properties);
+         const target = featureById[targetId];
+
+         document.getElementById("sc-title-span").textContent = `${target.company} ${target.plant}`;
+         
+         const flowRoot = document.getElementById("flow-chains");
+         const tableRoot = document.getElementById("table-chains");
+         flowRoot.innerHTML = "";
+         tableRoot.innerHTML = "";
+
+         chains.forEach((path, idx) => {
+            const div = document.createElement("div");
+            div.className = "chain-item";
+            const header = document.createElement("div");
+            header.className = "chain-header";
+            
+            const num = document.createElement("div");
+            num.className = "chain-number";
+            num.textContent = `ルート ${idx + 1}`;
+            
+            const btnMap = document.createElement("button");
+            btnMap.className = "btn-map-view";
+            btnMap.textContent = "🗺️ このルートを地図表示";
+            btnMap.onclick = () => this.showChainOnMap(idx);
+            
+            header.appendChild(num);
+            header.appendChild(btnMap);
+            div.appendChild(header);
+
+            const diagram = document.createElement("div");
+            diagram.className = "flow-diagram";
+            
+            const displayPath = traceType.includes("upstream") ? [...path].reverse() : path;
+
+            displayPath.forEach((id, i) => {
+               const p = featureById[id];
+               if(!p) return;
+               
+               const node = document.createElement("div");
+               node.className = "flow-node";
+               
+               const isTarget = String(p.id) === String(targetId);
+               const riskClass = p.risklevel === 'CRITICAL' ? 'risk-critical' :
+                                 p.risklevel === 'HIGH' ? 'risk-high' :
+                                 p.risklevel === 'MEDIUM' ? 'risk-medium' : 'risk-low';
+
+               node.innerHTML = `
+                  <div class="flow-box ${isTarget ? 'target' : ''}">${p.company}</div>
+                  <div class="flow-company">${p.plant}</div>
+                  <div class="risk-badge-sm ${riskClass}" style="margin-top:2px;">${p.risklevel}</div>
+               `;
+               diagram.appendChild(node);
+
+               if (i < displayPath.length - 1) {
+                  const arrow = document.createElement("div");
+                  arrow.className = "flow-arrow";
+                  arrow.innerHTML = "➡";
+                  diagram.appendChild(arrow);
+               }
+            });
+            div.appendChild(diagram);
+            flowRoot.appendChild(div);
+         });
+         
+         const tableHtml = [];
+         chains.forEach((path, idx) => {
+             tableHtml.push(`<div class="chain-item"><div class="chain-number">ルート ${idx+1}</div>`);
+             tableHtml.push(`<table style="width:100%; border-collapse:collapse; font-size:11px;">`);
+             tableHtml.push(`<thead style="background:#edf2f7; text-align:left;"><tr><th style="padding:6px;">階層 (Tier)</th><th>企業</th><th>拠点</th><th>リスク</th></tr></thead><tbody>`);
+             
+             const displayPath = traceType.includes("upstream") ? [...path].reverse() : path;
+
+             displayPath.forEach((id, i) => {
+                const p = featureById[id];
+                if(!p) return;
+                
+                const tierLevel = (displayPath.length - 1) - i;
+                const levelLabel = tierLevel === 0 ? "Tier 0 (自社/Tier1)" : `Tier ${tierLevel}`;
+                
+                tableHtml.push(`<tr style="border-bottom:1px solid #eee;">`);
+                tableHtml.push(`<td style="padding:6px; font-weight:700; color:#5a67d8;">${levelLabel}</td>`);
+                tableHtml.push(`<td>${p.company}</td><td>${p.plant}</td>`);
+                tableHtml.push(`<td><span class="risk-badge-sm" style="background:${this.getRiskColor(p.risklevel)}">${p.risklevel}</span></td>`);
+                tableHtml.push(`</tr>`);
+             });
+             tableHtml.push(`</tbody></table></div>`);
+         });
+         tableRoot.innerHTML = tableHtml.join("");
+
+         document.getElementById("supply-chain-viewer").classList.add("show");
+      },
+
+      closeSupplyChainViewer() {
+         document.getElementById("supply-chain-viewer").classList.remove("show");
+      }
+    };
+
+    window.addEventListener("load", () => {
+      app.initData();
+    });
+  </script>
+</body>
+</html>
