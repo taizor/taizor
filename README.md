@@ -6,7 +6,7 @@
 <img src="https://readme-typing-svg.herokuapp.com?font=Fira+Code&size=28&pause=2000&color=A9FEF7&center=true&vCenter=true&width=600&lines=こんにちは！まだ勉強中です👋;GitHubに挑戦中💪;これから成長します📚" alt="Typing SVG" />
 </div>
 
-🌱 **埼玉県加須市在住**  
+🌱 **埼玉在住**  
 プログラミング学習中。まずはやってみる！
 
 **興味**: Python, Webアプリ, AI  
