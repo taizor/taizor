@@ -1,8 +1,5 @@
-<div align="center">
-<img src="https://readme-typing-svg.herokuapp.com?font=Fira+Code&size=28&pause=2000&color=A9FEF7&center=true&width=500&lines=埼玉県加須市%F0%9F%87%A8%F0%9F%87%B5+プログラミング学習中👋" />
-</div>
-
-**やってみる！** Python・Webアプリを勉強中  
+**埼玉県加須市**  
+プログラミング学習中 | Python・Webアプリ  
 **目標**: 自分の作品を公開📱
 
 <div align="center">
